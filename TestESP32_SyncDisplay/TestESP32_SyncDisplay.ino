@@ -20,25 +20,10 @@
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
     THE SOFTWARE.
 
-Update: The movie2serial program which transmit data has moved to "extras"
-https://github.com/PaulStoffregen/OctoWS2811/tree/master/extras
- 
-  Required Connections
-  --------------------
-    pin 2:  LED Strip #1    OctoWS2811 drives 8 LED Strips.
-    pin 14: LED strip #2    All 8 are the same length.
-    pin 7:  LED strip #3
-    pin 8:  LED strip #4    A 100 to 220 ohm resistor should used
-    pin 6:  LED strip #5    between each Teensy pin and the
-    pin 20: LED strip #6    wire to the LED strip, to minimize
-    pin 21: LED strip #7    high frequency ringining & noise.
-    pin 5:  LED strip #8
-    pin 15 & 16 - Connect together, but do not use
-    pin 4:  Do not use
-    pin 3:  Do not use as PWM.  Normal use is ok.
-    pin SYNC_PIN: Frame Sync
 
-    When using more than 1 Teensy to display a video image, connect
+    Use the robopoly processing matrix contoller available on github
+    
+    When using more than 1 esp32 to display a video image, connect
     the Frame Sync signal between every board.  All boards will
     synchronize their WS2811 update using this signal.
 
@@ -58,6 +43,8 @@ https://github.com/PaulStoffregen/OctoWS2811/tree/master/extras
     ports on the same motherboard, may give poor performance.
 */
 
+  #include <EEPROM.h>
+
   #include <FastLED.h>
 
 // The actual arrangement of the LEDs connected to this Teensy 3.0 board.
@@ -67,8 +54,9 @@ https://github.com/PaulStoffregen/OctoWS2811/tree/master/extras
 // then goes right to left for its second row, then left to right,
 // zig-zagging for each successive row.
 #define LED_WIDTH      12   // number of LEDs horizontally
-#define LED_HEIGHT     12   // number of LEDs vertically (must be multiple of 8)
-#define LED_LAYOUT     0    // 0 = even rows left->right, 1 = even rows right->left
+#define LED_HEIGHT     12   // number of LEDs vertically 
+#define LED_LAYOUT     0    // 0 = even rows left->right (bottom-up), 1 = even rows right->left (up->bottom)
+#define LED_ORIENTATION 0   // 0 = horizontal rows, 1 = vertical (if 1 LED HEIGHT/WIDTH will be inversed)
 #define NB_STRIPE      1
 // The portion of the video image to show on this set of LEDs.  All 4 numbers
 // are percentages, from 0 to 100.  For a large LED installation with many
@@ -77,20 +65,16 @@ https://github.com/PaulStoffregen/OctoWS2811/tree/master/extras
 // video it displays.  By reading these numbers, the video application can
 // automatically configure itself, regardless of which serial port COM number
 // or device names are assigned to each Teensy 3.0 by your operating system.
-#define VIDEO_XOFFSET  0
-#define VIDEO_YOFFSET  0       // display entire image
-#define VIDEO_WIDTH    100
-#define VIDEO_HEIGHT   100
+// now stored in EPPROM and serial modifiable (p)
+#define VIDEO_XOFFSET_ADDR  1
+#define VIDEO_YOFFSET_ADDR  10       // display entire image
+#define VIDEO_WIDTH_ADDR    20
+#define VIDEO_HEIGHT_ADDR   30
 
-//#define VIDEO_XOFFSET  0
-//#define VIDEO_YOFFSET  0     // display upper half
-//#define VIDEO_WIDTH    100
-//#define VIDEO_HEIGHT   50
-
-//#define VIDEO_XOFFSET  0
-//#define VIDEO_YOFFSET  50    // display lower half
-//#define VIDEO_WIDTH    100
-//#define VIDEO_HEIGHT   50
+byte VIDEO_XOFFSET;
+byte VIDEO_YOFFSET;  
+byte VIDEO_WIDTH;    
+byte VIDEO_HEIGHT; 
 
 
 const int ledsPerStrip = (LED_WIDTH * LED_HEIGHT) / NB_STRIPE;
@@ -104,7 +88,7 @@ elapsedMicros elapsedUsecSinceLastFrameSync = 0;
 CRGB leds[LED_WIDTH * LED_HEIGHT];
 
 void setup() {
-    FastLED.addLeds<WS2812, 12>(leds, 0, ledsPerStrip);
+    FastLED.addLeds<WS2812, 17>(leds, 0, ledsPerStrip);
     /*FastLED.addLeds<WS2811, 13>(leds, ledsPerStrip, 2*ledsPerStrip);
     FastLED.addLeds<WS2811, 14>(leds, 2*ledsPerStrip, 3*ledsPerStrip);
     FastLED.addLeds<WS2811, 15>(leds, 3*ledsPerStrip, 4*ledsPerStrip);
@@ -118,6 +102,26 @@ void setup() {
     Serial.println(ledsPerStrip);
     FastLED.setBrightness(20);
     FastLED.show();
+
+/*
+ VIDEO_XOFFSET = EEPROM.get(VIDEO_XOFFSET_ADDR, VIDEO_XOFFSET);
+ delay(500);
+ VIDEO_YOFFSET = EEPROM.read(VIDEO_YOFFSET_ADDR);  
+  delay(500);
+
+ VIDEO_WIDTH   = EEPROM.read(VIDEO_WIDTH_ADDR);
+  delay(500);
+
+ VIDEO_HEIGHT  = EEPROM.read(VIDEO_HEIGHT_ADDR);
+
+*/
+
+ VIDEO_XOFFSET = 0;
+ VIDEO_YOFFSET = 0;
+ VIDEO_WIDTH   = 100;
+ VIDEO_HEIGHT  = 100;
+ 
+    
 }
 
 void loop() {
@@ -125,6 +129,7 @@ void loop() {
 // wait for a Start-Of-Message character:
 // 'n' = Frame of image or text not needing sync
 // 'b' = BrightnessValue in %
+// 's' = Set the image offset and size on this board
 //
 //   '*' = Frame of image data, with frame sync pulse to be sent
 //         a specified number of microseconds after reception of
@@ -247,7 +252,7 @@ void loop() {
     Serial.write(',');
     Serial.print(LED_LAYOUT);
     Serial.write(',');
-    Serial.print(0);
+    Serial.print(LED_ORIENTATION);
     Serial.write(',');
     Serial.print(0);
     Serial.write(',');
@@ -266,9 +271,71 @@ void loop() {
     Serial.print(0);
     Serial.println();
 
-  } else if (startChar >= 0) {
+  } 
+   else if (startChar == 's') {
+    // receive video position to store in EPPROM for future ask (values : sVIDEO_XOFFSET,VIDEO_YOFFSET,VIDEO_WIDTH,VIDEO_HEIGHT) ESP will restart in order for the change to take effet
+  Serial.print(Serial.readStringUntil(',').toInt());
+
+    
+    EEPROM.write(VIDEO_XOFFSET_ADDR,   Serial.readStringUntil(',').toInt());
+    EEPROM.write(VIDEO_YOFFSET_ADDR,   Serial.readStringUntil(',').toInt());
+    EEPROM.write(VIDEO_WIDTH_ADDR,     Serial.readStringUntil(',').toInt());
+    EEPROM.write(VIDEO_HEIGHT_ADDR,    Serial.readStringUntil(',').toInt());
+
+    delay(5000);
+    EEPROM.commit();
+    delay(5000);
+
+   VIDEO_XOFFSET = EEPROM.get(VIDEO_XOFFSET_ADDR, VIDEO_XOFFSET);
+   VIDEO_YOFFSET = EEPROM.read(VIDEO_YOFFSET_ADDR);   
+   VIDEO_WIDTH   = EEPROM.read(VIDEO_WIDTH_ADDR);
+   VIDEO_HEIGHT  = EEPROM.read(VIDEO_HEIGHT_ADDR);
+
+  Serial.print(EEPROM.read(VIDEO_WIDTH_ADDR));
+    Serial.print(VIDEO_WIDTH);
+
+    ESP.restart();
+  }
+  else if (startChar == 'g') {
+    // rglediator input
+   while(1){
+    int i =0 ;
+    while(i < LED_HEIGHT*LED_WIDTH)
+    {
+           while (!Serial.available()) {}
+          leds[i].r = Serial.read();
+           while (!Serial.available()) {}
+          leds[i].g = Serial.read();
+           while (!Serial.available()) {}
+          leds[i].b = Serial.read();
+    FastLED.show();
+
+          i++;    
+          
+    }
+   }
+
+  }
+  else if (startChar >= 0) {
     // discard unknown characters
   }
 }
 
 
+
+/*
+public void set(int val, int addr)
+{
+EEPROM.write(addr,highByte(val);
+EEPROM.write(addr+1,lowByte(val);
+}
+
+public int get(int val, int addr)
+{
+byte high = EEPROM.read(addr);
+byte low = EEPROM.read(addr+1);
+int myInteger=word(high,low);
+return myInteger;
+
+}
+*/

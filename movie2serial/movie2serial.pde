@@ -28,68 +28,222 @@
 
 // To configure this program, edit the following sections:
 //
-//  1: change myMovie to open a video file of your choice    ;-)
-//
-//  2: edit the serialConfigure() lines in setup() for your
-//     serial device names (Mac, Linux) or COM ports (Windows)
-//
-//  3: if your LED strips have unusual color configuration,
-//     edit colorWiring().  Nearly all strips have GRB wiring,
-//     so normally you can leave this as-is.
-//
-//  4: if playing 50 or 60 Hz progressive video (or faster),
-//     edit framerate in movieEvent().
-
+import g4p_controls.*;
 import processing.video.*;
 import processing.serial.*;
 import java.awt.Rectangle;
 
-Movie myMovie;
+// GUI
+GButton DImage;
+GButton DVideo;
+GButton SBrigthness;
+GButton LInterfaces;
+GButton SInterfaces;
+GButton SendRSerial;
+GButton ToggleAuto;
+int autoReloadImage = 0;
 
+GTextField VLocator;
+GTextField ILocator;
+GTextField BValue;
+GTextField LPort;
+GTextField RSerial;
+
+GLabel IList;
+GLabel EList;
+
+// END
 float gamma = 1.7;
 
 int numPorts=0;  // the number of serial ports in use
 int maxPorts=1; // maximum number of serial ports
+int stripeNumber = 1; //nombre de bande utilisé
 
-Serial[] ledSerial = new Serial[maxPorts];     // each port's actual Serial port
-Rectangle[] ledArea = new Rectangle[maxPorts]; // the area of the movie each port gets, in % (0-100)
-boolean[] ledLayout = new boolean[maxPorts];   // layout of rows, true = even is left->right
-PImage[] ledImage = new PImage[maxPorts];      // image sent to each port
+String[] ledSerialName = new String[maxPorts];          // each port's actual name for display reasons
+Serial[] ledSerial = new Serial[maxPorts];          // each port's actual Serial port
+Rectangle[] ledArea = new Rectangle[maxPorts];      // the area of the movie each port gets, in % (0-100)
+int[] ledLayout = new int[maxPorts];        // layout of rows, true = even is left->right (
+int[] ledOrientation = new int[maxPorts];   // are rows vertical -> 1 or horizontal -> 0
+PImage[] ledImage = new PImage[maxPorts];           // image sent to each port
 int[] gammatable = new int[256];
 int errorCount=0;
 float framerate=0;
+int mode = -1; //mode 1 = vid, 0 = img
+Movie myMovie;
 PImage displayImage;
 
-int stripeNumber = 1; //nombre de bande utilisé
-
 void settings() {
-  size(480, 400);  // create the window
+  size(800, 800);  // create the window
 }
 
 void setup() {
-  String[] list = Serial.list();
-  delay(20);
-  println("Serial Ports List:");
-  println(list);
-  serialConfigure("COM12");  // change these to your port names
-  //serialConfigure("/dev/ttyACM1");
-  if (errorCount > 0) exit();
+  G4P.setMouseOverEnabled(false);
+  
+  surface.setTitle("Robopoly Matrix Control");
+  DImage =         new GButton(this, 20, 20, 100, 30, "Display Image");
+  DVideo =         new GButton(this, 20, 60, 100, 30, "Display Video");
+  SBrigthness =    new GButton(this, 20, 100, 100, 30, "Set Brightness");
+  SInterfaces =    new GButton(this, 20, 140, 100, 30, "Set Interfaces");
+  LInterfaces =    new GButton(this, 650, 20, 100 , 30, "List Interfaces");
+  SendRSerial =    new GButton(this, 20, 180, 100 , 30, "Send Serial");
+
+  ToggleAuto  =    new GButton(this, 650, 180, 100, 30, "Enable Image Auto Reload");
+
+  ILocator    =    new GTextField(this, 140, 20, 450, 30); 
+  VLocator    =    new GTextField(this, 140, 60, 450, 30); 
+  BValue      =    new GTextField(this, 140, 100, 300, 30); 
+  LPort       =    new GTextField(this, 140, 140, 300, 30); 
+  RSerial     =    new GTextField(this, 140, 180, 300, 30); 
+  IList       =    new GLabel(this,  610, 60, 180, 40, "");
+  EList       =    new GLabel(this,  500, 70, 250, 100, "No errors ...");
+
+  DVideo.addEventHandler(this, "launchVideo");
+  DImage.addEventHandler(this, "displayImage");
+
+  VLocator.addEventHandler(this, "selectVid");
+  ILocator.addEventHandler(this, "selectImg");
+  ILocator.setText("C:\\Users\\teogo\\Downloads\\mario.jpg");
+  
+  
+  LInterfaces.addEventHandler(this, "listIfaces");
+  SInterfaces.addEventHandler(this, "setIfaces");
+
+  SBrigthness.addEventHandler(this, "setBrightness");
+
+  SendRSerial.addEventHandler(this, "sendRSerial");
+
+  ToggleAuto.addEventHandler(this, "toggleAuto");
+  
   for (int i=0; i < 256; i++) {
     gammatable[i] = (int)(pow((float)i / 255.0, gamma) * 255.0 + 0.5);
   }
- // myMovie = new Movie(this, "../../../Downloads/SampleVideo_360x240_30mb.mp4");
- // myMovie.loop();  // start the movie :-) //<>//
   
-  displayImage = loadImage("../../../Downloads/sample.png");
-  imageDisplay(displayImage);
+  loop();
+  //serialConfigure("COM12");
 }
 
+public void toggleAuto(GButton button, GEvent event){
+   autoReloadImage = int((autoReloadImage == 0));
+}
+public void setIfaces(GButton button, GEvent event){
+  EList.setText("No errors...");
+  numPorts = 0;
+  String[] list = LPort.getText().split(",");
+  maxPorts=list.length;
+  for(int i=0; i<maxPorts; i++)
+  {
+    serialConfigure(list[i]);
+  }
+  EList.setText(join(ledSerialName, ", "));
+}
 
+public void sendRSerial(GButton button, GEvent event){
+  for(int i=0; i<maxPorts; i++)
+  {
+    ledSerial[i].write(RSerial.getText());
+  }
+}
+public void listIfaces(GButton button, GEvent event){
+  String[] list = Serial.list();
+  delay(20);
+  println(list);
+  String concatStr = join(list, ", ");
+  IList.setText(concatStr);
+}
+
+public void launchVideo(GButton button, GEvent event) {
+    int go;
+    try{
+    File file = new File(VLocator.getText()); 
+    if (file.canRead() != true) throw new NullPointerException();
+    myMovie = new Movie(this, VLocator.getText()); 
+    if (myMovie == null) throw new NullPointerException();
+    mode=1;
+     // start the movie :-)
+    EList.setText("No errors...");
+    go = 1;
+    }
+    catch(Throwable e)
+    {
+    EList.setText("cannot load video : "+VLocator.getText());
+    go = 0;
+    mode=-1;
+    }
+    if(go == 1) {
+      myMovie.loop();
+    }
+ 
+}
+  String text;
+public void displayImage(GButton button, GEvent event) {
+  if(myMovie != null){
+    myMovie.stop();  // stop the movie :-)
+  }
+  int go;
+  try {
+   displayImage = loadImage(ILocator.getText()); //<>// //<>//
+  if (displayImage == null) throw new NullPointerException();
+  mode=0;
+  EList.setText("No errors...");
+  go=1;
+  }
+  catch(Throwable e)
+  {
+  EList.setText("cannot load image : "+ILocator.getText());
+  go=0;
+  mode=-1;
+  }
+  if(go == 1) imageDisplay(displayImage);
+
+}
+
+public void setBrightness(GButton button, GEvent event) {
+  String brightness = BValue.getText();
+  print("luminosité : ");
+  println(brightness);
+  for (int i=0; i < numPorts; i++) {
+    ledSerial[i].write('b');
+    ledSerial[i].write(brightness);
+  }
+}
+
+public void selectImg(GTextField textfield,  GEvent event) {
+  if(event.toString() == "GETS_FOCUS")
+  {
+    selectInput("Select an image", "imgSelected");
+  }
+}
+public void selectVid(GTextField textfield,  GEvent event) {
+  if(event.toString() == "GETS_FOCUS")
+  {
+    selectInput("Select a video", "vidSelected");
+  }
+}
+
+public void imgSelected(File selection) {
+  if(selection == null)
+  {
+    return;
+  }
+  ILocator.setText(selection.getAbsolutePath()); 
+  DImage.fireAllEvents(false);
+}
+
+public void vidSelected(File selection) {
+  if(selection == null)
+  {
+    return;
+  }
+  VLocator.setText(selection.getAbsolutePath()); 
+  DVideo.fireAllEvents(false);
+}
+
+ 
 // movieEvent runs for each new frame of movie data
 void movieEvent(Movie m) {
   println("movieEvent");
   // read the movie's next frame
-  m.read(); //<>//
+  m.read();
 
   //if (framerate == 0) framerate = m.getSourceFrameRate();
   framerate = 30.0; // TODO, how to read the frame rate???
@@ -104,7 +258,7 @@ void movieEvent(Movie m) {
                      0, 0, ledImage[i].width, ledImage[i].height);
     // convert the LED image to raw data
     byte[] ledData =  new byte[(ledImage[i].width * ledImage[i].height * 3) + 3];
-    image2data(ledImage[i], ledData, ledLayout[i], 3);
+    image2data(ledImage[i], ledData, ledLayout[i], ledOrientation[i], 3);
     if (i == 0) {
       ledData[0] = '*';  // first Teensy is the frame sync master
       int usec = (int)((1000000.0 / framerate) * 0.75);
@@ -128,14 +282,15 @@ void imageDisplay(PImage im) {
     // copy a portion of the movie's image to the LED image
     int xoffset = percentage(im.width, ledArea[i].x);
     int yoffset = percentage(im.height, ledArea[i].y);
-    int xwidth =  percentage(im.width, ledArea[i].width);
+    int xwidth =  percentage(im.width, ledArea[i].width); //<>//
     int yheight = percentage(im.height, ledArea[i].height);
     
     ledImage[i].copy(im, xoffset, yoffset, xwidth, yheight,
                      0, 0, ledImage[i].width, ledImage[i].height);
     // convert the LED image to raw data
     byte[] ledData =  new byte[(ledImage[i].width * ledImage[i].height * 3) + 3];
-    image2data(ledImage[i], ledData, ledLayout[i], 1);
+    
+    image2data(ledImage[i], ledData, ledLayout[i], ledOrientation[i], 1);
 
       ledData[0] = 'n';  // others sync to the master board
     
@@ -144,41 +299,77 @@ void imageDisplay(PImage im) {
     println(ledData);
   }
 }
-
-// image2data converts an image to OctoWS2811's raw data format.
-// The number of vertical pixels in the image must be a multiple
-// of 8.  The data array must be the proper size for the image.
-void image2data(PImage image, byte[] data, boolean layout, int offset) {
+ //<>//
+void image2data(PImage image, byte[] data, int layout, int orientation, int offset)
+{
+  if(orientation == 0) // horizontal
+  {
+     image2dataX(image, data, layout, offset);
+  }
+  if(orientation == 1) //vertical
+  {
+      image2dataY(image, data, layout, offset);
+  }
+}
+// image2data converts an image to raw data format.  24bit color in the order of the led
+// The data array must be the proper size for the image.
+void image2dataX(PImage image, byte[] data, int layout, int offset) {
+  println("X");
   int x, y, xbegin, xend, xinc, mask;
-  int linesPerPin = image.height / stripeNumber;
-  int pixel[] = new int[stripeNumber];
-
-  for (y = 0; y < linesPerPin; y++) {
-    if ((y & 1) == (layout ? 0 : 1)) {
-      // even numbered rows are left to right
-      xbegin = 0;
-      xend = image.width;
-      xinc = 1;
-    } else {
-      // odd numbered rows are right to left
-      xbegin = image.width - 1;
-      xend = -1;
-      xinc = -1;
-    }
-    for (x = xbegin; x != xend; x += xinc) {
-      for (int i=0; i < stripeNumber; i++) {
-        // fetch 8 pixels from the image, 1 for each pin
-        pixel[i] = image.pixels[x + (y + linesPerPin * i) * image.width];
-        pixel[i] = colorWiring(pixel[i]);
+  int linesPerPin = image.height / stripeNumber; //<>//
+  int pixel = 0;
+  for(int i=0; i<stripeNumber; i++)
+  {
+    for (y = 0; y < linesPerPin; y++) 
+    {
+      if ((y & 1) == (layout == 0 ? 0 : 1)) {
+        // even numbered rows are left to right
+        xbegin = 0;
+        xend = image.width;
+        xinc = 1;
+      } else {
+        // odd numbered rows are right to left
+        xbegin = image.width - 1;
+        xend = -1;
+        xinc = -1;
       }
-      // convert 8 pixels to 24 bytes
-      for (mask = 0x800000; mask != 0; mask >>= 1) {
-        byte b = 0;
-        for (int i=0; i < stripeNumber; i++) {
-          if ((pixel[i] & mask) != 0) b |= (1 << i);
+      for (x = xbegin; x != xend; x += xinc) {        // fetch x pixels from the image, 1 for each pin
+          pixel = image.pixels[x + y * image.width];
+          pixel = colorWiring(pixel);
+          data[offset++] = byte((pixel & 0xFF0000) >> 16);
+          data[offset++] = byte((pixel & 0x00FF00) >> 8);
+          data[offset++] = byte((pixel & 0x0000FF));
         }
-        data[offset++] = b;
+    }
+  }
+}
+
+void image2dataY(PImage image, byte[] data, int layout, int offset) { //for vertical layouts
+  int x, y, ybegin, yend, yinc, mask;
+  int linesPerPin = image.width / stripeNumber;
+  int pixel = 0;
+  for(int i=0; i<stripeNumber; i++)
+  {
+    for (x = 0; x < linesPerPin; x++) 
+    {
+      if ((x & 1) == (layout == 0 ? 0 : 1)) {
+        // even numbered rows are bottom to up
+        ybegin = 0;
+        yend = image.height;
+        yinc = 1;
+      } else {
+        // odd numbered rows are up to bottom
+        ybegin = image.height - 1;
+        yend = -1;
+        yinc = -1;
       }
+      for (y = ybegin; y != yend; y += yinc) {        // fetch x pixels from the image, 1 for each pin
+          pixel = image.pixels[y * image.height + x];
+          pixel = colorWiring(pixel);
+          data[offset++] = byte((pixel & 0xFF0000) >> 16);
+          data[offset++] = byte((pixel & 0x00FF00) >> 8);
+          data[offset++] = byte((pixel & 0x0000FF));
+        }
     }
   }
 }
@@ -193,52 +384,59 @@ int colorWiring(int c) {
   green = gammatable[green];
   blue = gammatable[blue];
 //return c;
-return (red << 16) | (green << 8) | (blue); // GRB - most common wiring
+return (green << 16) | (red << 8) | (blue); // GRB - most common wiring
 }
 
 // ask a Teensy board for its LED configuration, and set up the info for it.
 void serialConfigure(String portName) {
   if (numPorts >= maxPorts) {
-    println("too many serial ports, please increase maxPorts");
-    errorCount++;
+    EList.setText(EList.getText() + "too many serial ports, please increase maxPorts");
     return;
+  }
+  if(ledSerial[numPorts] != null)
+  {
+    ledSerial[numPorts].stop();
   }
   try {
     ledSerial[numPorts] = new Serial(this, portName, 1000000);
     if (ledSerial[numPorts] == null) throw new NullPointerException();
     ledSerial[numPorts].write('?');
   } catch (Throwable e) {
-    println("Serial port " + portName + " does not exist or is non-functional");
-    errorCount++;
+    EList.setText(EList.getText() + "Serial port " + portName + " does not exist or is non-functional \n");
     return;
   }
   delay(50);
   String line = ledSerial[numPorts].readStringUntil(10);
   if (line == null) {
-    println("Serial port " + portName + " is not responding.");
-    println("Is it really a Teensy 3.0 running VideoDisplay?");
-    errorCount++;
+    EList.setText(EList.getText() + "Serial port " + portName + " is not responding. \n Is it really a ESP32 (like) running the correct Robopoly Prgm \n");
     return;
   }
   String param[] = line.split(",");
   if (param.length != 12) {
-    println("Error: port " + portName + " did not respond to LED config query");
-    errorCount++;
+    EList.setText(EList.getText() + "Error: port " + portName + " did not respond to LED config query \n");
     return;
   }
   // only store the info and increase numPorts if Teensy responds properly
   ledImage[numPorts] = new PImage(Integer.parseInt(param[0]), Integer.parseInt(param[1]), RGB);
   ledArea[numPorts] = new Rectangle(Integer.parseInt(param[5]), Integer.parseInt(param[6]),
                      Integer.parseInt(param[7]), Integer.parseInt(param[8]));
-  ledLayout[numPorts] = (Integer.parseInt(param[5]) == 0);
+  ledOrientation[numPorts] = (Integer.parseInt(param[2])); //<>//
+  ledLayout[numPorts] = (Integer.parseInt(param[3])); //<>//
+  ledSerialName[numPorts] = portName;
   numPorts++;
 }
 
 // draw runs every time the screen is redrawn - show the movie...
 void draw() {
+  background(240);
   //println("draw");
   // show the original video
-  //image(displayImage, 0, 80);
+  if(mode == 0)
+  image(displayImage, 20, 300);
+  
+  if(mode == 1)
+  image(myMovie, 20, 300);
+  
 
   // then try to show what was most recently sent to the LEDs
   // by displaying all the images for each port.
@@ -250,17 +448,17 @@ void draw() {
     int xloc =  percentage(xsize, ledArea[i].x);
     int yloc =  percentage(ysize, ledArea[i].y);
     // show what should appear on the LEDs
-    image(ledImage[i], 240 - xsize / 2 + xloc, 10 + yloc);
+    image(ledImage[i], 400 + 240 - xsize / 2 + xloc, 400 + 10 + yloc);
   }
 }
 
 // respond to mouse clicks as pause/play
 boolean isPlaying = true;
 void mousePressed() {
-  if (isPlaying) {
+  if (mode == 1 && isPlaying) {
     myMovie.pause();
     isPlaying = false;
-  } else {
+  } else if (mode == 1) {
     myMovie.play();
     isPlaying = true;
   }
@@ -292,4 +490,13 @@ double percentageFloat(int percent) {
   if (percent ==  9) return 1.0 / 11.0;
   if (percent ==  8) return 1.0 / 12.0;
   return (double)percent / 100.0;
+}
+
+int lastTime = 0;
+public void loop()
+{
+  if(mode == 0 && autoReloadImage == 1 && millis()-lastTime < 30 )
+  {
+    imageDisplay(displayImage);  
+  }
 }
